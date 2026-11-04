@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           pnpm install --frozen-lockfile
-          pnpm add -D @tauri-apps/cli@2.11.3 --no-frozen-lockfile
+          pnpm add -D @tauri-apps/cli@2.11.3
       - name: Adapt mobile shell for iOS
         shell: bash
         run: |
