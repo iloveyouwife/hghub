@@ -1,0 +1,63 @@
+name: iOS unsigned build
+on:
+  push:
+    branches: ["codex/ios-build-nov04"]
+    paths: [".github/workflows/ios-codex-build.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm add -D @tauri-apps/cli@2.11.3 --no-frozen-lockfile
+      - name: Adapt mobile shell for iOS
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          function replaceOne(file, before, after) {
+            let text = fs.readFileSync(file, 'utf8');
+            if (!text.includes(before)) throw new Error('Expected source not found: ' + file);
+            fs.writeFileSync(file, text.replace(before, after));
+          }
+          replaceOne('src/api.ts', '/Android/i.test(navigator.userAgent)', '/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)');
+          replaceOne('src/api.ts', 'const scheme = "http";', 'const scheme = /iPhone|iPad|iPod/i.test(navigator.userAgent) ? "hg" : "http";');
+          replaceOne('src-tauri/src/lib.rs', 'let scheme = "http".to_string();', 'let scheme = if cfg!(target_os = "ios") { "hg" } else { "http" }.to_string();');
+          replaceOne('src/components/VideoSurface.tsx', '/^https?:\\/\\/hg\\.localhost\\//', '/^(?:https?|hg):\\/\\/hg\\.localhost\\//');
+          NODE
+      - name: Initialize iOS project
+        run: pnpm tauri ios init --ci
+      - name: Build unsigned iOS archive
+        run: pnpm tauri ios build --target aarch64 --no-sign --archive-only --ci
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(find src-tauri/gen/apple -type d -name '*.xcarchive' -print -quit)"
+          test -n "$archive"
+          app="$(find "$archive/Products/Applications" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          test -n "$app"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$app" "$RUNNER_TEMP/ipa/Payload/$(basename "$app")"
+          cd "$RUNNER_TEMP/ipa"
+          zip -qry "$GITHUB_WORKSPACE/HGhub-iOS-unsigned.ipa" Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HGhub-iOS-unsigned
+          path: HGhub-iOS-unsigned.ipa
+          if-no-files-found: error
